@@ -2,7 +2,8 @@
 param(
     [ValidateSet('Diagnose', 'Repair')]
     [string]$Mode = 'Diagnose',
-    [switch]$Force
+    [switch]$Force,
+    [switch]$Json
 )
 
 Set-StrictMode -Version Latest
@@ -13,6 +14,41 @@ $StableExtensionIds = @(
     'odlomjlbamekndcpllcnffbgeohgkmjh'
 )
 $NativeHostName = 'com.openai.codexextension'
+
+
+function Get-PropertyValue {
+    param($Object, [string]$Name)
+    if ($null -ne $Object -and $Object.PSObject.Properties[$Name]) { return $Object.$Name }
+    return $null
+}
+
+function Test-SamePath {
+    param($Actual, $Expected)
+    try {
+        if ([string]::IsNullOrWhiteSpace($Actual) -or [string]::IsNullOrWhiteSpace($Expected)) { return $false }
+        return [IO.Path]::GetFullPath($Actual).TrimEnd('\') -eq [IO.Path]::GetFullPath($Expected).TrimEnd('\')
+    } catch { return $false }
+}
+
+function Assert-PlainPath {
+    param([string]$Path)
+    $cursor = [IO.Path]::GetFullPath($Path)
+    while ($cursor) {
+        $item = Get-Item -LiteralPath $cursor -Force -ErrorAction SilentlyContinue
+        if ($item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw "Refusing a redirected write path: $cursor"
+        }
+        $cursor = [IO.Path]::GetDirectoryName($cursor)
+    }
+}
+
+function Test-ReportHealthy {
+    param($Report)
+    foreach ($name in @('PluginCacheComplete', 'LatestTargetsCurrentPlugin', 'HostConfigPathsValid', 'NativeManifestValid', 'AppDataV2ManifestCurrent', 'CodexHomeV2ManifestCurrent')) {
+        if ((Get-PropertyValue $Report $name) -ne $true) { return $false }
+    }
+    return $true
+}
 
 function Get-UserProfileDirectory {
     $profileDirectory = [Environment]::GetFolderPath([Environment+SpecialFolder]::UserProfile)
@@ -53,8 +89,8 @@ function Get-CurrentPackageContext {
         throw "The installed desktop app does not contain the bundled Chrome plugin: $pluginManifest"
     }
     $pluginVersion = (Get-Content -LiteralPath $pluginManifest -Raw | ConvertFrom-Json).version
-    if ([string]::IsNullOrWhiteSpace($pluginVersion)) {
-        throw 'The bundled Chrome plugin has no version.'
+    if ([string]$pluginVersion -notmatch '^\d+(\.\d+){2,3}(-[A-Za-z0-9.-]+)?$') {
+        throw 'The bundled Chrome plugin has an unsupported version format.'
     }
 
     [pscustomobject]@{
@@ -157,13 +193,17 @@ function Copy-PlainTree {
 }
 
 function Read-JsonIfPresent {
-    param([Parameter(Mandatory)][string]$Path)
+    param([Parameter(Mandatory)][string]$Path, [switch]$Strict)
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $null }
-    return Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+    try { return Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json }
+    catch {
+        if ($Strict) { throw "Unreadable JSON; repair stopped: $Path" }
+        return $null
+    }
 }
 
 function Test-PathsObject {
-    param($Paths)
+    param($Paths, $Expected)
     if (-not $Paths) { return $false }
     foreach ($name in @(
         'nodePath', 'nodeReplPath', 'codexCliPath',
@@ -173,6 +213,11 @@ function Test-PathsObject {
             [string]::IsNullOrWhiteSpace([string]$Paths.$name) -or
             -not (Test-Path -LiteralPath $Paths.$name)) {
             return $false
+        }
+    }
+    if ($Expected) {
+        foreach ($name in $Expected.Keys) {
+            if (-not (Test-SamePath (Get-PropertyValue $Paths $name) $Expected[$name])) { return $false }
         }
     }
     return $true
@@ -192,11 +237,22 @@ function Get-DiagnosticReport {
 
     $hostConfigPath = Join-Path $latest 'extension-host\windows\x64\extension-host-config.json'
     $hostConfig = Read-JsonIfPresent -Path $hostConfigPath
-    $hostConfigValid = [bool]($hostConfig -and
-        (Test-Path -LiteralPath $hostConfig.nodePath) -and
-        (Test-Path -LiteralPath $hostConfig.nodeReplPath) -and
-        (Test-Path -LiteralPath $hostConfig.codexCliPath) -and
-        (Test-Path -LiteralPath $hostConfig.browserClientPath))
+    $expected = @{
+        nodePath = $RuntimeContext.NodePath
+        nodeReplPath = $RuntimeContext.NodeReplPath
+        codexCliPath = $RuntimeContext.CodexCliPath
+        browserClientPath = Join-Path $latest 'scripts\browser-client.mjs'
+    }
+    $hostConfigValid = $true
+    foreach ($name in $expected.Keys) {
+        $value = Get-PropertyValue $hostConfig $name
+        if (-not (Test-SamePath $value $expected[$name]) -or
+            -not (Test-Path -LiteralPath $expected[$name] -PathType Leaf)) {
+            $hostConfigValid = $false
+        }
+    }
+    $expected.extensionHostPath = Join-Path $latest 'extension-host\windows\x64\extension-host.exe'
+    $expected.resourcesPath = $PackageContext.ResourcesPath
 
     $nativeManifestPath = Join-Path $RuntimeContext.LocalAppData "OpenAI\extension\$NativeHostName.json"
     $nativeManifest = Read-JsonIfPresent -Path $nativeManifestPath
@@ -206,24 +262,26 @@ function Get-DiagnosticReport {
     } catch {
         $null
     }
-    $nativeManifestValid = [bool]($nativeManifest -and
-        (Test-Path -LiteralPath $nativeManifest.path -PathType Leaf) -and
-        $registryValue -and
-        ([IO.Path]::GetFullPath($registryValue) -eq [IO.Path]::GetFullPath($nativeManifestPath)))
+    $origins = @(Get-PropertyValue $nativeManifest 'allowed_origins')
+    $nativeManifestValid = [bool](
+        (Test-SamePath (Get-PropertyValue $nativeManifest 'path') $expected.extensionHostPath) -and
+        (Test-Path -LiteralPath $expected.extensionHostPath -PathType Leaf) -and
+        (Get-PropertyValue $nativeManifest 'name') -eq $NativeHostName -and
+        (Get-PropertyValue $nativeManifest 'type') -eq 'stdio' -and
+        @($StableExtensionIds | Where-Object { "chrome-extension://$_/" -notin $origins }).Count -eq 0 -and
+        (Test-SamePath $registryValue $nativeManifestPath))
 
     $appDataManifest = Join-Path $RuntimeContext.LocalAppData 'OpenAI\Codex\chrome-native-hosts-v2.json'
     $codexManifest = Join-Path $CodexHome 'chrome-native-hosts-v2.json'
     $appDataDoc = Read-JsonIfPresent -Path $appDataManifest
     $codexDoc = Read-JsonIfPresent -Path $codexManifest
     $appDataEntry = @(if ($appDataDoc) {
-        $appDataDoc.entries |
-            Where-Object appVersion -eq $PackageContext.PluginVersion |
-            Select-Object -First 1
+        (Get-PropertyValue $appDataDoc 'entries') |
+            Where-Object appVersion -eq $PackageContext.PluginVersion
     })
     $codexEntry = @(if ($codexDoc) {
-        $codexDoc.entries |
-            Where-Object appVersion -eq $PackageContext.PluginVersion |
-            Select-Object -First 1
+        (Get-PropertyValue $codexDoc 'entries') |
+            Where-Object appVersion -eq $PackageContext.PluginVersion
     })
 
     [pscustomobject]@{
@@ -235,9 +293,11 @@ function Get-DiagnosticReport {
         HostConfigPathsValid = $hostConfigValid
         NativeManifestValid = $nativeManifestValid
         AppDataV2ManifestCurrent = [bool]($appDataEntry.Count -eq 1 -and
-            (Test-PathsObject -Paths $appDataEntry[0].paths))
+            (Get-PropertyValue $appDataDoc 'schemaVersion') -eq 2 -and
+            (Test-PathsObject -Paths (Get-PropertyValue $appDataEntry[0] 'paths') -Expected $expected))
         CodexHomeV2ManifestCurrent = [bool]($codexEntry.Count -eq 1 -and
-            (Test-PathsObject -Paths $codexEntry[0].paths))
+            (Get-PropertyValue $codexDoc 'schemaVersion') -eq 2 -and
+            (Test-PathsObject -Paths (Get-PropertyValue $codexEntry[0] 'paths') -Expected $expected))
         NodePath = $RuntimeContext.NodePath
         CodexCliPath = $RuntimeContext.CodexCliPath
         CacheRoot = $cacheRoot
@@ -279,7 +339,7 @@ function Add-CurrentV2Entry {
         [Parameter(Mandatory)][string]$CacheRoot,
         [Parameter(Mandatory)]$DesktopProcess
     )
-    $document = Read-JsonIfPresent -Path $ManifestPath
+    $document = Read-JsonIfPresent -Path $ManifestPath -Strict
     if (-not $document) {
         $document = [pscustomobject]@{ schemaVersion = 2; entries = @() }
     }
@@ -331,10 +391,62 @@ function Invoke-Repair {
     }
 
     $cacheRoot = Join-Path $CodexHome 'plugins\cache\openai-bundled\chrome'
+    Assert-PlainPath $cacheRoot
+    Assert-PlainPath (Join-Path $CodexHome 'repair-backups\chatgpt-chrome')
+    $target = Join-Path $cacheRoot $PackageContext.PluginVersion
+    Assert-ChildPath -Parent $cacheRoot -Child $target
+    Assert-PlainPath $target
+    $latest = Join-Path $cacheRoot 'latest'
+    $latestItem = Get-Item -LiteralPath $latest -Force -ErrorAction SilentlyContinue
+    if ($latestItem -and $latestItem.LinkType -ne 'Junction') {
+        throw "Refusing to replace a non-junction path: $latest"
+    }
+    if ($latestItem) {
+        Assert-ChildPath -Parent $cacheRoot -Child ([string]$latestItem.Target)
+        Assert-PlainPath ([string]$latestItem.Target)
+    }
+    $desktopProcess = Get-DesktopRootProcess -InstallLocation $PackageContext.Package.InstallLocation
+    if (-not $desktopProcess) { throw 'Keep the desktop app open while repairing; no root process found.' }
+    foreach ($relative in @('scripts\installManifest.mjs', 'scripts\browser-client.mjs', 'scripts\browser-service.mjs', 'extension-host\windows\x64\extension-host.exe')) {
+        if (-not (Test-Path -LiteralPath (Join-Path $PackageContext.PluginSource $relative) -PathType Leaf)) {
+            throw "Unsupported bundled plugin layout: missing $relative"
+        }
+    }
+    foreach ($path in @(
+        (Join-Path $RuntimeContext.LocalAppData 'OpenAI\Codex\chrome-native-hosts-v2.json'),
+        (Join-Path $CodexHome 'chrome-native-hosts-v2.json'),
+        (Join-Path $RuntimeContext.LocalAppData "OpenAI\extension\$NativeHostName.json")
+    )) {
+        Assert-PlainPath $path
+        $document = Read-JsonIfPresent -Path $path -Strict
+        if ($path.EndsWith('chrome-native-hosts-v2.json') -and (Test-Path -LiteralPath $path)) {
+            if (-not ($document -and (Get-PropertyValue $document 'schemaVersion') -eq 2 -and
+                $document.PSObject.Properties['entries'] -and $document.entries -is [array])) {
+                throw "Unsupported v2 manifest schema: $path"
+            }
+        }
+    }
+    $before = Get-DiagnosticReport -PackageContext $PackageContext -RuntimeContext $RuntimeContext -CodexHome $CodexHome
+    if (Test-ReportHealthy $before) {
+        return [pscustomobject]@{ Repaired = $false; AlreadyHealthy = $true }
+    }
     [IO.Directory]::CreateDirectory($cacheRoot) | Out-Null
-    $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $stamp = (Get-Date -Format 'yyyyMMdd-HHmmss-fff') + '-' + [guid]::NewGuid().ToString('N').Substring(0,8)
     $backup = Join-Path $CodexHome "repair-backups\chatgpt-chrome\$stamp"
     [IO.Directory]::CreateDirectory($backup) | Out-Null
+    $registryPath = "Registry::HKEY_CURRENT_USER\Software\Google\Chrome\NativeMessagingHosts\$NativeHostName"
+    $registryValue = try { Get-ItemPropertyValue -LiteralPath $registryPath -Name '(default)' } catch { $null }
+    Write-JsonAtomic -Path (Join-Path $backup 'recovery.json') -Value ([ordered]@{
+        schemaVersion = 1
+        previousJunctionTarget = if ($latestItem) { [string]$latestItem.Target } else { $null }
+        registryKeyExisted = Test-Path -LiteralPath $registryPath
+        previousRegistryValue = $registryValue
+        currentCache = $target
+        retainedCache = "$target.pre-repair-$stamp"
+    })
+
+    $script:LastBackupDirectory = $backup
+    Write-Verbose "Recovery backup: $backup"
 
     $appDataV2 = Join-Path $RuntimeContext.LocalAppData 'OpenAI\Codex\chrome-native-hosts-v2.json'
     $codexV2 = Join-Path $CodexHome 'chrome-native-hosts-v2.json'
@@ -354,6 +466,11 @@ function Invoke-Repair {
     $target = Join-Path $cacheRoot $PackageContext.PluginVersion
     $staging = Join-Path $cacheRoot ('.repair-staging-' + [guid]::NewGuid().ToString('N'))
     Assert-ChildPath -Parent $cacheRoot -Child $staging
+    foreach ($item in Get-ChildItem -LiteralPath $PackageContext.PluginSource -Recurse -Force) {
+        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            throw 'Bundled plugin contains a reparse point; refusing to copy redirected content.'
+        }
+    }
     Copy-PlainTree -Source $PackageContext.PluginSource -Destination $staging
     if (-not (Test-TreeEquivalent -Source $PackageContext.PluginSource -Destination $staging)) {
         throw "The copied plugin failed verification. Staging data was retained at $staging"
@@ -378,12 +495,13 @@ function Invoke-Repair {
     Move-Item -LiteralPath $staging -Destination $target
 
     $latest = Join-Path $cacheRoot 'latest'
-    if (Test-Path -LiteralPath $latest) {
+    if (Get-Item -LiteralPath $latest -Force -ErrorAction SilentlyContinue) {
         $latestItem = Get-Item -LiteralPath $latest -Force
         if ($latestItem.LinkType -ne 'Junction') {
             throw "Refusing to replace a non-junction path: $latest"
         }
-        Remove-Item -LiteralPath $latest -Force
+        # Remove only the junction, never recurse into its target.
+        [IO.Directory]::Delete($latest)
     }
     New-Item -ItemType Junction -Path $latest -Target $target | Out-Null
 
@@ -413,14 +531,49 @@ function Invoke-Repair {
     }
 }
 
-$codexHome = Get-CodexHomeDirectory
-$packageContext = Get-CurrentPackageContext
-$runtimeContext = Get-CurrentRuntimeContext
-
-if ($Mode -eq 'Repair') {
-    Invoke-Repair -PackageContext $packageContext -RuntimeContext $runtimeContext -CodexHome $codexHome |
-        Format-List
+# Dot-sourcing loads functions for isolated tests without executing diagnostics or repair.
+if ($MyInvocation.InvocationName -ne '.') {
+    $script:LastBackupDirectory = $null
+    $repairMutex = $null
+    $lockTaken = $false
+    try {
+        if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT -or
+            $env:PROCESSOR_ARCHITECTURE -ne 'AMD64') {
+            throw 'This release supports Windows x64 only. Use 64-bit Windows PowerShell.'
+        }
+        $codexHome = Get-CodexHomeDirectory
+        $packageContext = Get-CurrentPackageContext
+        $runtimeContext = Get-CurrentRuntimeContext
+        $repairResult = $null
+        if ($Mode -eq 'Repair') {
+            $repairMutex = New-Object Threading.Mutex($false, 'Local\ChatGPTChromeRepair')
+            try { $lockTaken = $repairMutex.WaitOne(0) }
+            catch [Threading.AbandonedMutexException] { $lockTaken = $true }
+            if (-not $lockTaken) { throw 'Another repair is running. Wait for it to finish.' }
+            $repairResult = Invoke-Repair -PackageContext $packageContext -RuntimeContext $runtimeContext -CodexHome $codexHome
+        }
+        $report = Get-DiagnosticReport -PackageContext $packageContext -RuntimeContext $runtimeContext -CodexHome $codexHome
+        $healthy = Test-ReportHealthy $report
+        if ($repairResult -and $repairResult.PSObject.Properties['Repaired'] -and -not $healthy) {
+            $repairResult.Repaired = $false
+        }
+        if ($Json) {
+            [pscustomobject]@{ version = '0.2.0'; healthy = $healthy; checks = $report; repair = $repairResult } | ConvertTo-Json -Depth 20
+        } else {
+            if ($repairResult) { $repairResult | Format-List }
+            $report | Format-List
+        }
+        if (-not $healthy) { exit 1 }
+        exit 0
+    } catch {
+        if ($Json) { [pscustomobject]@{ version = '0.2.0'; healthy = $false; error = $_.Exception.Message; backupDirectory = $script:LastBackupDirectory } | ConvertTo-Json }
+        else {
+            if ($script:LastBackupDirectory) { Write-Warning "Recovery backup: $script:LastBackupDirectory" }
+            Write-Error $_ -ErrorAction Continue
+        }
+        exit 2
+    } finally {
+        if ($lockTaken) { $repairMutex.ReleaseMutex() }
+        if ($repairMutex) { $repairMutex.Dispose() }
+    }
 }
-
-Get-DiagnosticReport -PackageContext $packageContext -RuntimeContext $runtimeContext -CodexHome $codexHome |
-    Format-List

@@ -1,0 +1,17 @@
+name: Windows tests
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        shell: [powershell, pwsh]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Isolated regression tests
+        shell: ${{ matrix.shell }}
+        run: ./tests/Run-Tests.ps1

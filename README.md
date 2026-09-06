@@ -1,45 +1,49 @@
 # Repair ChatGPT Chrome
 
-A reusable Codex skill for diagnosing and repairing the ChatGPT Chrome extension integration on Windows after a ChatGPT/Codex desktop app update or reinstall.
+[![Windows tests](https://github.com/Francis-moon/repair-chatgpt-chrome/actions/workflows/test.yml/badge.svg)](https://github.com/Francis-moon/repair-chatgpt-chrome/actions/workflows/test.yml)
 
-It targets the recurring side-panel error:
+A community-maintained Codex skill for repairing ChatGPT Chrome side-panel integration after Windows desktop app updates. **v0.2.0** · MIT · [中文说明](README.zh-CN.md)
 
-> Unable to start ChatGPT — Codex app-server manifest entry is missing required path nodePath
+Typical error: `Codex app-server manifest entry is missing required path nodePath`.
 
-The skill discovers all user-specific paths and installed versions at runtime. It does not contain usernames, machine paths, runtime hashes, or copied diagnostic logs.
+## Scope
 
-## What it checks
-
-- The current Windows AppX package and bundled Chrome plugin
-- The versioned plugin cache and its current junction
-- The native-messaging manifest and registry entry
-- extension-host-config.json runtime paths
-- Both chrome-native-hosts-v2.json discovery manifests
-
-## Safety
-
-Diagnostic mode is read-only. Repair mode requires an explicit Force switch, creates timestamped backups, retains old caches, and stops only the matching ChatGPT extension-host process. It does not close Chrome.
+Windows x64, Windows PowerShell 5.1, and the `OpenAI.Codex` AppX package with its bundled Chrome plugin. Discovers installed versions and paths; no account credentials, browser-profile access or third-party runtime downloads. Not an official OpenAI product. Future desktop layouts may require another update.
 
 ## Install
 
-Install the repository as a personal Codex skill with Skill Installer, or place the repository folder in a supported personal skills directory.
+Ask Codex Skill Installer to install `https://github.com/Francis-moon/repair-chatgpt-chrome` at tag `v0.2.0`, or clone that tag into your supported personal skills directory. Then invoke `$repair-chatgpt-chrome` and describe the error. The agent diagnoses first and uses your explicit authorization before applying a repair.
 
-## Use
+For manual use, clone the repository and run from its directory:
 
-Invoke the skill with:
+```powershell
+git clone --branch v0.2.0 https://github.com/Francis-moon/repair-chatgpt-chrome.git
+cd repair-chatgpt-chrome
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Repair-ChatGPTChrome.ps1 -Mode Diagnose -Json
+```
 
-    $repair-chatgpt-chrome
+After reviewing the failed checks and accepting the changes:
 
-The skill diagnoses first and asks before applying repairs.
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Repair-ChatGPTChrome.ps1 -Mode Repair -Force -Json
+```
 
-## Manual script usage
+Run Diagnose again, then click **Try again** in Chrome. Exit **0** means all configuration checks pass; **1** means failed checks; **2** means discovery, compatibility or execution error. Browser confirmation is a separate final step.
 
-Diagnose:
+## What v0.2.0 improves
 
-    powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Repair-ChatGPTChrome.ps1 -Mode Diagnose
+- Diagnoses malformed JSON and missing fields without crashing.
+- Detects stale runtimes even when old files still exist; checks native-host identity and extension origins.
+- Checks prerequisites before activation, rejects redirected write paths and unknown v2 schemas, and prevents concurrent repairs.
+- Skips healthy installations; preserves JSON backups, prior registry value, junction target and old caches for recovery.
+- Provides JSON output, documented exit codes and isolated Windows regression tests.
 
-Repair after reviewing the diagnosis:
+Repair stops only matching extension hosts. It never closes Chrome or deletes browser profiles. An interrupted repair may need manual recovery; automatic transaction rollback is not provided. See [troubleshooting and recovery](references/troubleshooting.md).
 
-    powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Repair-ChatGPTChrome.ps1 -Mode Repair -Force
+## Validation and contributions
 
-Official browser-extension guidance: https://learn.chatgpt.com/docs/chrome-extension
+Run `powershell -NoProfile -ExecutionPolicy Bypass -File tests/Run-Tests.ps1`. The same tests run in CI under Windows PowerShell 5.1 and PowerShell 7. Tests use temporary fixtures and simulated registry/process discovery; they do not prove end-to-end Chrome behavior on every desktop release.
+
+[Design sources](references/design-sources.md) records the high-star repositories consulted and the methods adopted. [Changelog](CHANGELOG.md) records release changes. Report failures through [GitHub Issues](https://github.com/Francis-moon/repair-chatgpt-chrome/issues) with the skill version, OS architecture, failed check names and a redacted error. Do not upload raw JSON diagnostics, registry exports, backups, tokens or browser-profile data.
+
+[Official browser-extension guidance](https://learn.chatgpt.com/docs/chrome-extension).
