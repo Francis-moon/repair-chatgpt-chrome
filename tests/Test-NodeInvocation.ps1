@@ -10,3 +10,6 @@ try { Invoke-NodeModule -NodePath $NodePath -JavaScript 'process.exit(7)' }
 catch { $failed = $_.Exception.Message -like '*code 7*' }
 if (-not $failed) { throw 'Node exit failure was not propagated.' }
 Write-Output 'PASS: real Node preserves quotes, Unicode and backslashes; nonzero exit is propagated.'
+
+# The intentional failure above must not leak into CI's wrapper exit status.
+exit 0
