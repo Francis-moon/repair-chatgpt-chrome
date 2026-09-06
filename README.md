@@ -2,7 +2,7 @@
 
 [![Windows tests](https://github.com/Francis-moon/repair-chatgpt-chrome/actions/workflows/test.yml/badge.svg)](https://github.com/Francis-moon/repair-chatgpt-chrome/actions/workflows/test.yml)
 
-A community-maintained Codex skill for repairing ChatGPT Chrome side-panel integration after Windows desktop app updates. **v0.2.0** · MIT · [中文说明](README.zh-CN.md)
+A community-maintained Codex skill for repairing ChatGPT Chrome side-panel integration after Windows desktop app updates. **v0.2.1** · MIT · [中文说明](README.zh-CN.md)
 
 Typical error: `Codex app-server manifest entry is missing required path nodePath`.
 
@@ -12,12 +12,12 @@ Windows x64, Windows PowerShell 5.1, and the `OpenAI.Codex` AppX package with it
 
 ## Install
 
-Ask Codex Skill Installer to install `https://github.com/Francis-moon/repair-chatgpt-chrome` at tag `v0.2.0`, or clone that tag into your supported personal skills directory. Then invoke `$repair-chatgpt-chrome` and describe the error. The agent diagnoses first and uses your explicit authorization before applying a repair.
+Ask Codex Skill Installer to install `https://github.com/Francis-moon/repair-chatgpt-chrome` at tag `v0.2.1`, or clone that tag into your supported personal skills directory. Then invoke `$repair-chatgpt-chrome` and describe the error. The agent diagnoses first and uses your explicit authorization before applying a repair.
 
 For manual use, clone the repository and run from its directory:
 
 ```powershell
-git clone --branch v0.2.0 https://github.com/Francis-moon/repair-chatgpt-chrome.git
+git clone --branch v0.2.1 https://github.com/Francis-moon/repair-chatgpt-chrome.git
 cd repair-chatgpt-chrome
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Repair-ChatGPTChrome.ps1 -Mode Diagnose -Json
 ```
@@ -30,7 +30,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Repair-ChatGPTChrome
 
 Run Diagnose again, then click **Try again** in Chrome. Exit **0** means all configuration checks pass; **1** means failed checks; **2** means discovery, compatibility or execution error. Browser confirmation is a separate final step.
 
-## What v0.2.0 improves
+## What v0.2.1 fixes
+
+Fixes Windows PowerShell 5.1 stripping quotes when calling the bundled installer. JavaScript now runs from a temporary UTF-8 module file. Real Node tests cover Unicode paths, quotes, backslashes and failure propagation. After applying this correction to an interrupted repair, all six checks passed and the user confirmed the Chrome side panel worked.
+
+## Reliability features
 
 - Diagnoses malformed JSON and missing fields without crashing.
 - Detects stale runtimes even when old files still exist; checks native-host identity and extension origins.

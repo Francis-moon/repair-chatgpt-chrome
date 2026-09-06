@@ -384,6 +384,20 @@ function Add-CurrentV2Entry {
     Write-JsonAtomic -Path $ManifestPath -Value $document
 }
 
+function Invoke-NodeModule {
+    param([Parameter(Mandatory)][string]$NodePath, [Parameter(Mandatory)][string]$JavaScript)
+    # PS 5.1 strips embedded quotes in node -e. A UTF-8 module file avoids
+    # native argument conversion and pipeline encoding for JavaScript content.
+    $modulePath = Join-Path ([IO.Path]::GetTempPath()) ('chatgpt-chrome-' + [guid]::NewGuid().ToString('N') + '.mjs')
+    try {
+        [IO.File]::WriteAllText($modulePath, $JavaScript, (New-Object Text.UTF8Encoding($false)))
+        & $NodePath $modulePath
+        if ($LASTEXITCODE -ne 0) { throw "The Node module exited with code $LASTEXITCODE" }
+    } finally {
+        if ([IO.File]::Exists($modulePath)) { [IO.File]::Delete($modulePath) }
+    }
+}
+
 function Invoke-Repair {
     param($PackageContext, $RuntimeContext, [string]$CodexHome)
     if (-not $Force) {
@@ -511,10 +525,7 @@ function Invoke-Repair {
     $nodeJson = $RuntimeContext.NodePath | ConvertTo-Json -Compress
     $nodeReplJson = $RuntimeContext.NodeReplPath | ConvertTo-Json -Compress
     $javascript = "import { install } from $moduleJson; await install({appServerRuntimePaths:{codexCliPath:$codexJson,nodePath:$nodeJson,nodeReplPath:$nodeReplJson}});"
-    & $RuntimeContext.NodePath --input-type=module -e $javascript
-    if ($LASTEXITCODE -ne 0) {
-        throw "The bundled manifest installer exited with code $LASTEXITCODE"
-    }
+    Invoke-NodeModule -NodePath $RuntimeContext.NodePath -JavaScript $javascript
 
     $desktopProcess = Get-DesktopRootProcess -InstallLocation $PackageContext.Package.InstallLocation
     if (-not $desktopProcess) {
@@ -558,7 +569,7 @@ if ($MyInvocation.InvocationName -ne '.') {
             $repairResult.Repaired = $false
         }
         if ($Json) {
-            [pscustomobject]@{ version = '0.2.0'; healthy = $healthy; checks = $report; repair = $repairResult } | ConvertTo-Json -Depth 20
+            [pscustomobject]@{ version = '0.2.1'; healthy = $healthy; checks = $report; repair = $repairResult } | ConvertTo-Json -Depth 20
         } else {
             if ($repairResult) { $repairResult | Format-List }
             $report | Format-List
@@ -566,7 +577,7 @@ if ($MyInvocation.InvocationName -ne '.') {
         if (-not $healthy) { exit 1 }
         exit 0
     } catch {
-        if ($Json) { [pscustomobject]@{ version = '0.2.0'; healthy = $false; error = $_.Exception.Message; backupDirectory = $script:LastBackupDirectory } | ConvertTo-Json }
+        if ($Json) { [pscustomobject]@{ version = '0.2.1'; healthy = $false; error = $_.Exception.Message; backupDirectory = $script:LastBackupDirectory } | ConvertTo-Json }
         else {
             if ($script:LastBackupDirectory) { Write-Warning "Recovery backup: $script:LastBackupDirectory" }
             Write-Error $_ -ErrorAction Continue

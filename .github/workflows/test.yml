@@ -15,3 +15,9 @@ jobs:
       - name: PowerShell 7 regression tests
         shell: pwsh
         run: ./tests/Run-Tests.ps1
+      - name: Windows PowerShell 5.1 real Node invocation
+        shell: powershell
+        run: ./tests/Test-NodeInvocation.ps1
+      - name: PowerShell 7 real Node invocation
+        shell: pwsh
+        run: ./tests/Test-NodeInvocation.ps1

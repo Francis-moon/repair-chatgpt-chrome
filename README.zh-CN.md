@@ -1,6 +1,6 @@
 # 修复 ChatGPT Chrome 侧边栏连接
 
-社区维护的 Codex skill，面向 Windows 桌面应用升级后出现的 Chrome 连接问题。**v0.2.0** · MIT · [English](README.md)
+社区维护的 Codex skill，面向 Windows 桌面应用升级后出现的 Chrome 连接问题。**v0.2.1** · MIT · [English](README.md)
 
 典型错误：`Codex app-server manifest entry is missing required path nodePath`。
 
@@ -10,7 +10,7 @@ Windows x64、64 位 Windows PowerShell 5.1，以及包含 Chrome 插件的 `Ope
 
 ## 安装与使用
 
-让 Codex 的 Skill Installer 安装仓库 `https://github.com/Francis-moon/repair-chatgpt-chrome` 的 `v0.2.0` 标签版本，然后输入 `$repair-chatgpt-chrome` 并描述错误。
+让 Codex 的 Skill Installer 安装仓库 `https://github.com/Francis-moon/repair-chatgpt-chrome` 的 `v0.2.1` 标签版本，然后输入 `$repair-chatgpt-chrome` 并描述错误。
 
 也可以克隆该版本，从仓库目录手动运行：
 
@@ -26,7 +26,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Repair-ChatGPTChrome
 
 修复后再次诊断，并在 Chrome 点击 **Try again** 或重新打开侧边栏。退出码 0 表示六项配置检查全部通过，1 表示检查失败，2 表示环境不支持或执行错误。配置检查通过后，还需要实际确认侧边栏能正常使用。
 
-## 本次升级
+## v0.2.1 实测修正
+
+修复 Windows PowerShell 5.1 调用安装器时丢失引号的问题，改用临时 UTF-8 模块文件执行，并增加真实 Node 调用测试。在一次中断修复中应用此修正后，六项检查全部通过，用户确认 Chrome 侧边栏恢复正常。此结果代表一次真实环境验证，不代表所有桌面版本均已验证。
+
+## 可靠性改进
 
 - JSON 损坏、字段缺失时仍能输出诊断结果。
 - 识别仍然存在的旧运行时路径，避免误报正常。

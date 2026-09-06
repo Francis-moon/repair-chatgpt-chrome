@@ -20,3 +20,9 @@ Run `tests/Run-Tests.ps1` using Windows PowerShell 5.1 and PowerShell 7. The fix
 Registry/process discovery is simulated. The suite never invokes the real installer or stops real extension hosts. A real read-only diagnostic was also run for v0.2.0. End-to-end browser repair, automatic rollback and support for future AppX layouts are not established by these tests.
 
 Before each release: inspect changed files for local paths or secrets, validate the SKILL frontmatter, run both shells and inspect CI. Publish a version tag and release notes that distinguish tested behavior from remaining uncertainty.
+
+## v0.2.1 real-world follow-up
+
+A real repair exposed quote stripping in Windows PowerShell 5.1 native `node -e` argument conversion, which the original isolated suite did not exercise. The corrected helper writes a temporary UTF-8 module file and removes it after execution. `tests/Test-NodeInvocation.ps1` launches real Node and verifies Unicode, quotes, backslashes and nonzero exit propagation. CI runs it in both shells.
+
+The interrupted repair was resumed from the installer step after checking its retained backup and completed cache activation. All six diagnostics then passed; the user confirmed the side panel worked. This is one confirmed recovery, not a full fresh-run compatibility matrix.

@@ -2,7 +2,7 @@
 name: repair-chatgpt-chrome
 description: Diagnose and repair ChatGPT Chrome side-panel native messaging on Windows x64 after desktop updates, including missing app-server nodePath errors. Use for the OpenAI.Codex AppX bundled Chrome integration, not unrelated extensions or non-Windows systems.
 metadata:
-  version: "0.2.0"
+  version: "0.2.1"
 ---
 
 # Repair ChatGPT Chrome
