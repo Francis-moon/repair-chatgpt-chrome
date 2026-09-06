@@ -1,0 +1,4 @@
+interface:
+  display_name: "Repair ChatGPT Chrome"
+  short_description: "Diagnose and repair ChatGPT Chrome integration on Windows"
+  default_prompt: "Use $repair-chatgpt-chrome to diagnose my ChatGPT Chrome extension connection on Windows."
