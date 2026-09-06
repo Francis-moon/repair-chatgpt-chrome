@@ -7,11 +7,11 @@ permissions:
 jobs:
   regression:
     runs-on: windows-latest
-    strategy:
-      matrix:
-        shell: [powershell, pwsh]
     steps:
       - uses: actions/checkout@v4
-      - name: Isolated regression tests
-        shell: ${{ matrix.shell }}
+      - name: Windows PowerShell 5.1 regression tests
+        shell: powershell
+        run: ./tests/Run-Tests.ps1
+      - name: PowerShell 7 regression tests
+        shell: pwsh
         run: ./tests/Run-Tests.ps1
